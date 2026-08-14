@@ -31,7 +31,13 @@ pub(crate) fn set_window_always_on_top(
     if let Err(error) = state.set_window_always_on_top(kind, enabled) {
         log::error!("save per-window always-on-top preference failed: {error}");
         let _ = window.set_always_on_top(previous);
+        if matches!(kind, DesktopWindowKind::MainDps) {
+            main_dps::reassert_opacity(window, state, "always-on-top rollback");
+        }
         return Err(CommandError::hud_config_save_failed());
+    }
+    if matches!(kind, DesktopWindowKind::MainDps) {
+        main_dps::reassert_opacity(window, state, "always-on-top change");
     }
     Ok(())
 }
