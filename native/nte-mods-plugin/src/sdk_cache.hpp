@@ -32,8 +32,6 @@ namespace nte::mods::sdk_cache
 		wchar_t* error,
 		size_t error_capacity) noexcept;
 
-	using ResolvePluginDirectory = bool(*)(std::filesystem::path& result) noexcept;
-
 	enum class InspectResult : uint8_t
 	{
 		Reusable,
@@ -71,8 +69,8 @@ namespace nte::mods::sdk_cache
 
 	struct WorkerContext
 	{
+		HMODULE plugin_module;
 		HANDLE stop_event;
-		ResolvePluginDirectory resolve_plugin_directory;
 	};
 
 	DWORD WINAPI RunWorker(void* context);
