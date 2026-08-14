@@ -1,6 +1,6 @@
 use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, Position, Size, WebviewWindow, WindowEvent,
-    webview::PageLoadEvent,
+    AppHandle, LogicalPosition, LogicalSize, Manager, Position, Size, State, WebviewWindow,
+    WindowEvent, webview::PageLoadEvent,
 };
 
 use crate::{
@@ -50,6 +50,11 @@ pub(crate) fn set_passthrough(
         CommandError::window_operation_failed()
     })?;
     state.set_passthrough(enabled);
+    // WebView2/Tauri may rewrite the Win32 extended style while toggling cursor
+    // passthrough. Reassert the persisted layered alpha after that style change.
+    if let Err(error) = restore_opacity(window, state) {
+        log::warn!("restore main DPS opacity after passthrough change failed: {error:?}");
+    }
     Ok(())
 }
 
@@ -73,8 +78,18 @@ pub(crate) fn set_opacity(window: &WebviewWindow, opacity: f32) -> Result<(), Co
     )
 }
 
+pub(crate) fn restore_opacity(
+    window: &WebviewWindow,
+    state: &AppState,
+) -> Result<(), CommandError> {
+    set_opacity(window, state.ui_config_snapshot().opacity)
+}
+
 #[tauri::command]
-pub(crate) fn show_main_dps_when_ready(window: WebviewWindow) -> Result<(), CommandError> {
+pub(crate) fn show_main_dps_when_ready(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<(), CommandError> {
     validate_window(&window)?;
     window.show().map_err(|error| {
         log::error!("show main DPS after the frontend first paint failed: {error}");
@@ -87,7 +102,13 @@ pub(crate) fn show_main_dps_when_ready(window: WebviewWindow) -> Result<(), Comm
     window.set_focus().map_err(|error| {
         log::error!("focus main DPS after the frontend first paint failed: {error}");
         CommandError::window_operation_failed()
-    })
+    })?;
+    // The final reveal can cause WebView2 to recreate native window styles.
+    // Apply the saved opacity after reveal so startup state matches the config.
+    if let Err(error) = restore_opacity(&window, state.inner()) {
+        log::warn!("restore main DPS opacity after frontend reveal failed: {error:?}");
+    }
+    Ok(())
 }
 
 pub(crate) fn initialize(window: &WebviewWindow, app: AppHandle, state: AppState) {
@@ -98,7 +119,7 @@ pub(crate) fn initialize(window: &WebviewWindow, app: AppHandle, state: AppState
     if let Err(error) = restore_geometry(window, &state) {
         log::warn!("restore main DPS geometry failed: {error}");
     }
-    if let Err(error) = set_opacity(window, state.ui_config_snapshot().opacity) {
+    if let Err(error) = restore_opacity(window, &state) {
         log::warn!("restore main DPS opacity failed: {error:?}");
     }
     let event_window = window.clone();
