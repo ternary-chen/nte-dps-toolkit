@@ -916,6 +916,12 @@ impl LiveCaptureInner {
             | CoreSignal::DebugPacket
             | CoreSignal::PacketObserved => false,
             CoreSignal::ModScript { state_changed, .. } => state_changed,
+            CoreSignal::PartyEffectsReplaced { state_changed } => {
+                // This mutation only affects which effects are frozen onto the
+                // next hit; it does not invalidate an existing read model.
+                let _ = state_changed;
+                false
+            }
             CoreSignal::Status(_) => {
                 let mut status = self
                     .status
@@ -1092,6 +1098,7 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            active_effects: Vec::new(),
         }))
     }
 

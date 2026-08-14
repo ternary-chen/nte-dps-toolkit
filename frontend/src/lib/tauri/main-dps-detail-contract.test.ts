@@ -4,7 +4,7 @@ import { parseMainDpsDetailSnapshot } from "./main-dps-detail-contract";
 
 function snapshot(overrides: Record<string, unknown> = {}) {
   return {
-    contractVersion: 4,
+    contractVersion: 5,
     generation: "12",
     kind: "character",
     abyssHalf: "first",
@@ -73,6 +73,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     ],
     skillTotalCount: 1,
     skillsTruncated: false,
+    effectCoverage: [],
     totalHits: 1,
     totalDamage: 123,
     maxRowDamage: 123,
@@ -99,6 +100,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
         targetHpAfter: 877,
         targetMaxHp: 1000,
         targetHpPercent: 87.7,
+        activeEffects: [],
       },
     ],
     ...overrides,
@@ -145,6 +147,7 @@ describe("main DPS detail contract", () => {
           skills: [],
           skillTotalCount: 1,
           skillsTruncated: false,
+          effectCoverage: [],
         }),
       ),
     ).toThrow(/truncation metadata/);

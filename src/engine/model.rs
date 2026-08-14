@@ -164,6 +164,34 @@ pub struct Hit {
     pub follow_up_attack_type: Option<String>,
     #[serde(default)]
     pub follow_up_damage_attribute: Option<String>,
+    #[serde(default)]
+    pub active_effects: Vec<HitActiveEffect>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActiveEffectKind {
+    GameplayEffect,
+    Buff,
+    Debuff,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HitActiveEffect {
+    pub name_hash: u64,
+    pub effect_key: u64,
+    pub stack_count: u16,
+    pub duration_ms: u32,
+    pub kind: ActiveEffectKind,
+    pub inhibited: bool,
+    pub infinite: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct PartyEffectSnapshot {
+    pub snapshot_sequence: u64,
+    pub character_id: u32,
+    pub effects: Vec<HitActiveEffect>,
 }
 
 impl Hit {
@@ -2103,10 +2131,16 @@ pub struct CombatState {
     pub time_stop_events: Vec<TimeStopEvent>,
     time_stop: TimeStopTracker,
     enemy_telemetry: EnemyTelemetryTracker,
+    active_party_effects: HashMap<u32, PartyEffectSnapshot>,
 }
 
 impl CombatState {
     pub fn push_hit(&mut self, mut hit: Hit) {
+        if !hit.direction.is_incoming()
+            && let Some(snapshot) = self.active_party_effects.get(&hit.char_id)
+        {
+            hit.active_effects.clone_from(&snapshot.effects);
+        }
         if let Some(target) = self.enemy_telemetry.take_hit_target_for_hit(&hit) {
             project_enemy_hit_target(&mut hit, &target);
         }
@@ -2135,6 +2169,22 @@ impl CombatState {
             );
         }
         self.sync_clock_with_time_stops();
+    }
+
+    pub fn replace_party_effects(&mut self, snapshots: Vec<PartyEffectSnapshot>) -> bool {
+        if snapshots.iter().all(|snapshot| {
+            self.active_party_effects
+                .get(&snapshot.character_id)
+                .is_some_and(|current| current.snapshot_sequence == snapshot.snapshot_sequence)
+        }) && snapshots.len() == self.active_party_effects.len()
+        {
+            return false;
+        }
+        self.active_party_effects = snapshots
+            .into_iter()
+            .map(|snapshot| (snapshot.character_id, snapshot))
+            .collect();
+        true
     }
 
     pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) {
@@ -2827,6 +2877,7 @@ pub enum EngineEvent {
     EmptyCurtain(Vec<EmptyCurtainItem>),
     EmptyCurtainCharacters(Vec<EmptyCurtainCharacter>),
     ModScript(ModScriptEvent),
+    PartyEffects(Vec<PartyEffectSnapshot>),
     Status(String),
     Warning(String),
     Error(String),
@@ -3153,6 +3204,7 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            active_effects: Vec::new(),
         }
     }
 

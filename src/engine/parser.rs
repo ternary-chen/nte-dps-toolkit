@@ -2738,6 +2738,7 @@ pub fn parse_damage_payload(
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            active_effects: Vec::new(),
         });
     }
     hits

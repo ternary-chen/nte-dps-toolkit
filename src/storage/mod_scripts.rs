@@ -667,6 +667,7 @@ const CAPABILITY_GAME_SESSION: u16 = 1 << 7;
 const CAPABILITY_MEMORY_WRITE: u16 = 1 << 8;
 const CAPABILITY_UNREAL_REFLECTION: u16 = 1 << 9;
 const CAPABILITY_PROCESS_EVENT: u16 = 1 << 10;
+const CAPABILITY_CHARACTER_EFFECTS: u16 = 1 << 11;
 
 #[derive(Clone, Copy)]
 struct ModSourceLine<'a> {
@@ -1515,6 +1516,7 @@ fn mod_capability(name: &str) -> Option<u16> {
         "memory.write" => CAPABILITY_MEMORY_WRITE,
         "unreal.reflection" => CAPABILITY_UNREAL_REFLECTION,
         "process.event" => CAPABILITY_PROCESS_EVENT,
+        "character.effects" => CAPABILITY_CHARACTER_EFFECTS,
         _ => return None,
     })
 }
@@ -1533,6 +1535,7 @@ fn mod_ipc_service(name: &str) -> Option<(u16, u16)> {
         "equipment.set_item_locked" => (10, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
         "combat_clock.query_transitions" => (11, CAPABILITY_IPC | CAPABILITY_COMBAT_CLOCK),
         "ipc.query_mod_events" => (12, CAPABILITY_IPC),
+        "character.query_effects" => (14, CAPABILITY_IPC | CAPABILITY_CHARACTER_EFFECTS),
         _ => return None,
     })
 }

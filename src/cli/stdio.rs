@@ -483,6 +483,7 @@ impl Runtime {
                     self.battle_summary_dirty = true;
                 }
             }
+            CoreSignal::PartyEffectsReplaced { .. } => {}
             CoreSignal::InventoryCharactersReplaced => {}
             CoreSignal::InventoryReplaced => self.publish_inventory_snapshot(outbound),
             CoreSignal::Status(_) => {
@@ -2077,6 +2078,7 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            active_effects: Vec::new(),
         }
     }
 

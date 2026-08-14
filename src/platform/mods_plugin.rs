@@ -60,6 +60,7 @@ const IPC_SET_ITEM_DISCARDED: u16 = 9;
 const IPC_SET_ITEM_LOCKED: u16 = 10;
 const IPC_QUERY_COMBAT_CLOCK_TRANSITIONS: u16 = 11;
 const IPC_QUERY_MOD_EVENTS: u16 = 12;
+const IPC_QUERY_CHARACTER_EFFECTS: u16 = 14;
 #[cfg(any(feature = "desktop", test))]
 const IPC_QUERY_MOD_LOGS: u16 = 13;
 const IPC_TIMEOUT_MS: u32 = 1_500;
@@ -75,6 +76,8 @@ const MOD_EVENT_HISTORY_SIZE: usize = 18;
 const MOD_EVENT_ID_SIZE: usize = 32;
 const MOD_EVENT_NAME_SIZE: usize = 32;
 const MOD_EVENT_VALUE_COUNT: usize = 3;
+const CHARACTER_EFFECT_SIZE: usize = 48;
+const CHARACTER_EFFECT_MAX: usize = 42;
 #[cfg(any(feature = "desktop", test))]
 const MOD_LOG_SIZE: usize = 112;
 #[cfg(any(feature = "desktop", test))]
@@ -91,6 +94,7 @@ const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
 static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static CHARACTER_EFFECT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[cfg(feature = "desktop")]
 static MOD_LOG_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[cfg(feature = "desktop")]
@@ -136,11 +140,15 @@ const EQUIPMENT_MOD_FILE_NAME: &str = "equipment.nte";
 #[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD_FILE_NAME: &str = "combat-clock.nte";
 #[cfg(feature = "desktop")]
+const CHARACTER_EFFECTS_MOD_FILE_NAME: &str = "character-effects.nte";
+#[cfg(feature = "desktop")]
 const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
 #[cfg(feature = "desktop")]
 const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
 #[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
+#[cfg(feature = "desktop")]
+const CHARACTER_EFFECTS_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/character-effects.nte");
 #[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V1: &[u8] = br#"nte_mod(4)
 mod("enemy-telemetry")
@@ -1261,6 +1269,7 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
 "#;
 #[cfg(feature = "desktop")]
 const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[
+    b"nte_mod_set 1\nload combat-clock\nload equipment\n",
     b"nte_mod_set 1\nload equipment\nload combat-clock\n",
     b"nte_mod_set 1\nload combat-clock\nload enemy-telemetry\nload equipment\n",
 ];
@@ -1374,6 +1383,20 @@ pub struct ModEventSnapshot {
     pub mod_id: String,
     pub name: String,
     pub values: Vec<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CharacterEffectSnapshot {
+    pub snapshot_sequence: u64,
+    pub timestamp_100ns: u64,
+    pub character_id: u32,
+    pub party_slot: u16,
+    pub effect_key: u64,
+    pub name_hash: u64,
+    pub duration_ms: u32,
+    pub stack_count: u16,
+    pub kind: u8,
+    pub flags: u8,
 }
 
 #[cfg(any(feature = "desktop", test))]
@@ -1622,6 +1645,19 @@ pub fn query_mod_events() -> Result<Vec<ModEventSnapshot>, String> {
     request[8..16].copy_from_slice(&request_id.to_le_bytes());
     let response = call_plugin_request(&request)?;
     decode_mod_events(&response, request_id)
+}
+
+pub fn query_character_effects() -> Result<Vec<CharacterEffectSnapshot>, String> {
+    let request_id = CHARACTER_EFFECT_QUERY_SEQUENCE
+        .fetch_add(1, Ordering::Relaxed)
+        .max(1);
+    let mut request = [0_u8; REQUEST_SIZE];
+    request[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+    request[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+    request[6..8].copy_from_slice(&IPC_QUERY_CHARACTER_EFFECTS.to_le_bytes());
+    request[8..16].copy_from_slice(&request_id.to_le_bytes());
+    let response = call_plugin_request(&request)?;
+    decode_character_effects(&response, request_id)
 }
 
 #[cfg(feature = "desktop")]
@@ -2003,6 +2039,98 @@ fn decode_mod_events(
         });
     }
     Ok(events)
+}
+
+fn decode_character_effects(
+    bytes: &[u8; RESPONSE_SIZE],
+    request_id: u64,
+) -> Result<Vec<CharacterEffectSnapshot>, String> {
+    let (status, count) = decode_response_header(bytes, request_id)?;
+    if status == PLUGIN_STATUS_MOD_DISABLED {
+        return Err("character effect IPC is disabled".to_owned());
+    }
+    if status != PLUGIN_STATUS_DRY_RUN_OK || count as usize > CHARACTER_EFFECT_MAX {
+        return Err("Mod loader returned invalid character effect snapshot".to_owned());
+    }
+    let mut effects = Vec::with_capacity(count as usize);
+    for index in 0..count as usize {
+        let offset = RESPONSE_HEADER_SIZE + index * CHARACTER_EFFECT_SIZE;
+        let read_u64 = |at: usize| {
+            bytes
+                .get(at..at + 8)
+                .and_then(|v| v.try_into().ok())
+                .map(u64::from_le_bytes)
+        };
+        let read_u32 = |at: usize| {
+            bytes
+                .get(at..at + 4)
+                .and_then(|v| v.try_into().ok())
+                .map(u32::from_le_bytes)
+        };
+        let read_u16 = |at: usize| {
+            bytes
+                .get(at..at + 2)
+                .and_then(|v| v.try_into().ok())
+                .map(u16::from_le_bytes)
+        };
+        let Some(snapshot_sequence) = read_u64(offset) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(timestamp_100ns) = read_u64(offset + 8) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(character_id) = read_u32(offset + 16) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(party_slot) = read_u16(offset + 20) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(reserved) = read_u16(offset + 22) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(effect_key) = read_u64(offset + 24) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(name_hash) = read_u64(offset + 32) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(duration_ms) = read_u32(offset + 40) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(stack_count) = read_u16(offset + 44) else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(kind) = bytes.get(offset + 46).copied() else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        let Some(flags) = bytes.get(offset + 47).copied() else {
+            return Err("truncated character effect snapshot".to_owned());
+        };
+        if reserved != 0
+            || character_id == 0
+            || party_slot >= 4
+            || effect_key == 0
+            || name_hash == 0
+            || stack_count == 0
+            || kind > 2
+            || flags & !0x3 != 0
+        {
+            return Err("Mod loader returned invalid character effect record".to_owned());
+        }
+        effects.push(CharacterEffectSnapshot {
+            snapshot_sequence,
+            timestamp_100ns,
+            character_id,
+            party_slot,
+            effect_key,
+            name_hash,
+            duration_ms,
+            stack_count,
+            kind,
+            flags,
+        });
+    }
+    Ok(effects)
 }
 
 #[cfg(any(feature = "desktop", test))]
@@ -2881,9 +3009,17 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
             COMBAT_CLOCK_MOD,
             LEGACY_COMBAT_CLOCK_MOD_PROGRAMS,
         ),
+        (
+            mod_directory.join(CHARACTER_EFFECTS_MOD_FILE_NAME),
+            CHARACTER_EFFECTS_MOD,
+            &[],
+        ),
     ] {
         if !path.exists() {
-            if workspace_initialized {
+            if workspace_initialized
+                && path.file_name().and_then(|value| value.to_str())
+                    != Some(CHARACTER_EFFECTS_MOD_FILE_NAME)
+            {
                 continue;
             }
             if let Err(error) = fs::write(&path, bytes) {
@@ -3642,7 +3778,10 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         installed.sort();
-        assert_eq!(installed, ["combat-clock.nte", "equipment.nte"]);
+        assert_eq!(
+            installed,
+            ["character-effects.nte", "combat-clock.nte", "equipment.nte"]
+        );
         fs::remove_dir_all(workspace).unwrap();
     }
 

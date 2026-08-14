@@ -280,6 +280,17 @@ export function MainDpsDetailPage() {
             </div>
           )}
 
+          {snapshot.effectCoverage.length > 0 && (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5" data-testid="effect-coverage">
+              <span className="text-sm font-medium text-muted-foreground">Buff / Debuff</span>
+              {snapshot.effectCoverage.slice(0, 12).map((effect) => (
+                <span key={effect.nameHash} className="rounded-md border bg-muted/40 px-2 py-1 font-mono text-xs" title={`${effect.affectedHits} hits · ${formatMainMetric(effect.affectedDamage)}`}>
+                  {effect.kind.toUpperCase()} {effect.name ?? effect.nameHash.slice(-8)} · {(effect.hitCoverage * 100).toFixed(1)}%
+                </span>
+              ))}
+            </div>
+          )}
+
           {snapshot.kind === "character" && snapshot.skills.length > 0 && (
             <SkillBreakdown
               snapshot={snapshot}
@@ -829,7 +840,7 @@ function HitRow({
                   ? "bg-destructive/10 text-destructive"
                   : "border border-dashed bg-muted text-muted-foreground",
             )}
-            title={`${row.typeLabel}\n${row.skill}\n${row.damageType}`}
+            title={`${row.typeLabel}\n${row.skill}\n${row.damageType}${row.activeEffects.length ? `\nEffects: ${row.activeEffects.map((effect) => `${effect.kind}:${effect.nameHash.slice(-8)}×${effect.stackCount}`).join(", ")}` : ""}`}
           >
             {row.reactionTextKey === null ? (
               row.typeLabel

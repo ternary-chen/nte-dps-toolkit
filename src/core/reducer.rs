@@ -31,6 +31,9 @@ pub enum CoreSignal {
         event: Box<ModScriptEvent>,
         state_changed: bool,
     },
+    PartyEffectsReplaced {
+        state_changed: bool,
+    },
     /// Engine status line to surface to the user.
     Status(String),
     /// Non-fatal degradation (e.g. resource load failure).
@@ -92,6 +95,9 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
                 state_changed: outcome == ModScriptApplyOutcome::ProjectionChanged,
             }
         }
+        EngineEvent::PartyEffects(snapshots) => CoreSignal::PartyEffectsReplaced {
+            state_changed: state.replace_party_effects(snapshots),
+        },
         EngineEvent::Status(status) => CoreSignal::Status(status),
         EngineEvent::Warning(warning) => CoreSignal::Warning(warning),
         EngineEvent::Error(error) => CoreSignal::Error(error),
@@ -103,9 +109,10 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
 mod tests {
     use super::*;
     use crate::engine::model::{
-        AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, EnemyIdentity, Hit,
-        HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId,
-        ModScriptEventPhase, PacketDebug, PacketObservation, TimeStopEvent,
+        AbyssEvent, ActiveEffectKind, EmptyCurtainCharacter, EmptyCurtainItem, EnemyIdentity, Hit,
+        HitActiveEffect, HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp,
+        HtItemNetId, ModScriptEventPhase, PacketDebug, PacketObservation, PartyEffectSnapshot,
+        TimeStopEvent,
     };
 
     const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
@@ -147,6 +154,7 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            active_effects: Vec::new(),
         }
     }
 
@@ -176,6 +184,52 @@ mod tests {
         assert_eq!(signal, CoreSignal::StateChanged);
         assert_eq!(state.hits.len(), 1);
         assert_eq!(state.total_damage, 100.0);
+    }
+
+    #[test]
+    fn party_effect_snapshot_is_frozen_onto_the_next_matching_outgoing_hit() {
+        let mut state = CombatState::default();
+        let effect = HitActiveEffect {
+            name_hash: 7,
+            effect_key: 9,
+            stack_count: 2,
+            duration_ms: 5000,
+            kind: ActiveEffectKind::Buff,
+            inhibited: false,
+            infinite: false,
+        };
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::PartyEffects(vec![PartyEffectSnapshot {
+                    snapshot_sequence: 3,
+                    character_id: 7,
+                    effects: vec![effect.clone()]
+                }])
+            ),
+            CoreSignal::PartyEffectsReplaced {
+                state_changed: true
+            }
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(1.0, 7, 100.0))),
+        );
+        assert_eq!(state.hits[0].active_effects, vec![effect]);
+        let frozen_effects = state.hits[0].active_effects.clone();
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::PartyEffects(vec![PartyEffectSnapshot {
+                    snapshot_sequence: 3,
+                    character_id: 7,
+                    effects: frozen_effects
+                }])
+            ),
+            CoreSignal::PartyEffectsReplaced {
+                state_changed: false
+            }
+        );
     }
 
     #[test]

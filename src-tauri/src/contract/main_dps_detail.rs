@@ -1,4 +1,5 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +12,8 @@ use nte_dps_tool::{
         live_capture::LiveCapturePhase,
     },
     engine::model::{
-        CharacterInfo, CharacterStats, CombatState, DamageAttributionSummary, Hit, HitDirection,
-        HitDirectionSummary, PartyCombatState, is_qte_follow_up_damage_type,
+        ActiveEffectKind, CharacterInfo, CharacterStats, CombatState, DamageAttributionSummary,
+        Hit, HitDirection, HitDirectionSummary, PartyCombatState, is_qte_follow_up_damage_type,
         is_unbalance_damage_hit,
     },
     storage::{
@@ -24,7 +25,7 @@ use nte_dps_tool::{
 
 use crate::state::{AppState, MainDpsDetailKind, MainDpsDetailRequest};
 
-pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 4;
+pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 5;
 pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
 pub(crate) const MAIN_DPS_DETAIL_QTE_LIMIT: usize = 32;
@@ -55,6 +56,7 @@ pub(crate) struct MainDpsDetailSnapshot {
     pub skills: Vec<MainDpsSkillSummary>,
     pub skill_total_count: usize,
     pub skills_truncated: bool,
+    pub effect_coverage: Vec<MainDpsEffectCoverage>,
     pub total_hits: usize,
     pub total_damage: f64,
     pub max_row_damage: f64,
@@ -82,6 +84,7 @@ impl MainDpsDetailSnapshot {
         let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
         let generation = state.next_sequence().to_string();
         let actions = MainDpsDetailActions::from_state(state);
+        let effect_catalog = effect_catalog();
         let snapshot = state.with_main_dps_detail_state(|combat, selected_half| {
             let source = selected_half
                 .map(|half| DetailSource::Party(combat.abyss.half(half)))
@@ -94,6 +97,7 @@ impl MainDpsDetailSnapshot {
             let mut direction_summary = HitDirectionSummary::default();
             let mut qte_accumulators = HashMap::<&str, (u64, f64)>::new();
             let mut skill_accumulators = HashMap::<&str, SkillSummaryAccumulator<'_>>::new();
+            let mut effect_accumulators = HashMap::<u64, (ActiveEffectKind, u64, f64, u16)>::new();
 
             // Keep this as the only hit walk in the detail projection. The
             // filter-independent summaries use the same character-scoped
@@ -114,12 +118,28 @@ impl MainDpsDetailSnapshot {
                     let damage = hit.total_damage();
                     total_damage += damage;
                     max_row_damage = max_row_damage.max(damage);
+                    let mut seen_effects = HashSet::new();
+                    for effect in &hit.active_effects {
+                        if effect.inhibited || !seen_effects.insert(effect.name_hash) {
+                            continue;
+                        }
+                        let entry = effect_accumulators.entry(effect.name_hash).or_insert((
+                            effect.kind.clone(),
+                            0,
+                            0.0,
+                            0,
+                        ));
+                        entry.1 += 1;
+                        entry.2 += damage;
+                        entry.3 = entry.3.max(effect.stack_count);
+                    }
                     if row_index >= offset && rows.len() < page_limit {
                         rows.push(MainDpsHitSnapshot::from_hit(
                             hit,
                             row_index,
                             &resources.characters,
                             language,
+                            effect_catalog,
                         ));
                     }
                 }
@@ -168,6 +188,32 @@ impl MainDpsDetailSnapshot {
             let skill_total_count = skills.len();
             let skills_truncated = skill_total_count > MAIN_DPS_DETAIL_SKILL_LIMIT;
             skills.truncate(MAIN_DPS_DETAIL_SKILL_LIMIT);
+            let mut effect_coverage = effect_accumulators
+                .into_iter()
+                .map(
+                    |(name_hash, (kind, hits, damage, max_stack))| MainDpsEffectCoverage {
+                        name_hash: format!("{name_hash:016x}"),
+                        name: effect_catalog.get(&name_hash).cloned(),
+                        kind: effect_kind_id(&kind),
+                        affected_hits: hits,
+                        hit_coverage: if total_hits == 0 {
+                            0.0
+                        } else {
+                            hits as f64 / total_hits as f64
+                        },
+                        affected_damage: damage,
+                        damage_coverage: if total_damage <= 0.0 {
+                            0.0
+                        } else {
+                            damage / total_damage
+                        },
+                        max_stack,
+                    },
+                )
+                .collect::<Vec<_>>();
+            effect_coverage
+                .sort_by(|left, right| right.affected_damage.total_cmp(&left.affected_damage));
+            effect_coverage.truncate(256);
             let qte_type = match &request.filter {
                 CombatDetailFilter::QteType(value) => Some(value.clone()),
                 _ => None,
@@ -203,6 +249,7 @@ impl MainDpsDetailSnapshot {
                 skills,
                 skill_total_count,
                 skills_truncated,
+                effect_coverage,
                 total_hits,
                 total_damage,
                 max_row_damage,
@@ -703,6 +750,71 @@ pub(crate) struct MainDpsHitSnapshot {
     pub target_hp_after: f64,
     pub target_max_hp: f64,
     pub target_hp_percent: f64,
+    pub active_effects: Vec<MainDpsHitEffect>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MainDpsHitEffect {
+    pub name_hash: String,
+    pub name: Option<String>,
+    pub kind: &'static str,
+    pub stack_count: u16,
+    pub duration_ms: u32,
+    pub inhibited: bool,
+    pub infinite: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MainDpsEffectCoverage {
+    pub name_hash: String,
+    pub name: Option<String>,
+    pub kind: &'static str,
+    pub affected_hits: u64,
+    pub hit_coverage: f64,
+    pub affected_damage: f64,
+    pub damage_coverage: f64,
+    pub max_stack: u16,
+}
+
+fn effect_kind_id(kind: &ActiveEffectKind) -> &'static str {
+    match kind {
+        ActiveEffectKind::GameplayEffect => "ge",
+        ActiveEffectKind::Buff => "buff",
+        ActiveEffectKind::Debuff => "debuff",
+    }
+}
+
+#[derive(Deserialize)]
+struct EffectCatalogDocument {
+    entries: Vec<EffectCatalogEntry>,
+}
+#[derive(Deserialize)]
+struct EffectCatalogEntry {
+    hash: String,
+    name: String,
+}
+
+fn effect_catalog() -> &'static HashMap<u64, String> {
+    static CATALOG: OnceLock<HashMap<u64, String>> = OnceLock::new();
+    CATALOG.get_or_init(|| {
+        serde_json::from_str::<EffectCatalogDocument>(include_str!(
+            "../../../res/data/effects/effect_catalog.json"
+        ))
+        .map(|document| {
+            document
+                .entries
+                .into_iter()
+                .filter_map(|entry| {
+                    u64::from_str_radix(&entry.hash, 16)
+                        .ok()
+                        .map(|hash| (hash, entry.name))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    })
 }
 
 impl MainDpsHitSnapshot {
@@ -711,6 +823,7 @@ impl MainDpsHitSnapshot {
         index: usize,
         characters: &HashMap<u32, CharacterInfo>,
         language: Language,
+        effect_catalog: &HashMap<u64, String>,
     ) -> Self {
         let skill = hit_skill_name(hit);
         Self {
@@ -749,6 +862,19 @@ impl MainDpsHitSnapshot {
             target_hp_after: hit.target_hp_after,
             target_max_hp: hit.target_max_hp,
             target_hp_percent: hit.target_hp_percent,
+            active_effects: hit
+                .active_effects
+                .iter()
+                .map(|effect| MainDpsHitEffect {
+                    name_hash: format!("{:016x}", effect.name_hash),
+                    name: effect_catalog.get(&effect.name_hash).cloned(),
+                    kind: effect_kind_id(&effect.kind),
+                    stack_count: effect.stack_count,
+                    duration_ms: effect.duration_ms,
+                    inhibited: effect.inhibited,
+                    infinite: effect.infinite,
+                })
+                .collect(),
         }
     }
 }
@@ -911,6 +1037,7 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            active_effects: Vec::new(),
         }
     }
 

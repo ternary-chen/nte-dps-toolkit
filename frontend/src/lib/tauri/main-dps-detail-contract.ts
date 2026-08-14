@@ -1,6 +1,7 @@
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 
-export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 4;
+export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 5;
+export const MAIN_DPS_DETAIL_MAX_EFFECTS = 256;
 export const MAIN_DPS_DETAIL_MAX_QTE_SUMMARIES = 32;
 export const MAIN_DPS_DETAIL_MAX_SKILLS = 250;
 export const MAIN_DPS_DETAIL_MAX_ROWS = 250;
@@ -39,6 +40,7 @@ export interface MainDpsDetailSnapshot {
   skills: MainDpsSkillSummary[];
   skillTotalCount: number;
   skillsTruncated: boolean;
+  effectCoverage: MainDpsEffectCoverage[];
   totalHits: number;
   totalDamage: number;
   maxRowDamage: number;
@@ -136,6 +138,28 @@ export interface MainDpsHit {
   targetHpAfter: number;
   targetMaxHp: number;
   targetHpPercent: number;
+  activeEffects: MainDpsHitEffect[];
+}
+
+export interface MainDpsHitEffect {
+  nameHash: string;
+  name: string | null;
+  kind: "ge" | "buff" | "debuff";
+  stackCount: number;
+  durationMs: number;
+  inhibited: boolean;
+  infinite: boolean;
+}
+
+export interface MainDpsEffectCoverage {
+  nameHash: string;
+  name: string | null;
+  kind: "ge" | "buff" | "debuff";
+  affectedHits: number;
+  hitCoverage: number;
+  affectedDamage: number;
+  damageCoverage: number;
+  maxStack: number;
 }
 
 export function parseMainDpsDetailSnapshot(
@@ -187,6 +211,7 @@ export function parseMainDpsDetailSnapshot(
     "rows",
     MAIN_DPS_DETAIL_MAX_ROWS,
   ).map(parseHit);
+  const effectCoverage = boundedList(source.effectCoverage, "effectCoverage", MAIN_DPS_DETAIL_MAX_EFFECTS).map(parseEffectCoverage);
   return {
     contractVersion,
     generation: text(source.generation, "generation"),
@@ -228,6 +253,7 @@ export function parseMainDpsDetailSnapshot(
     skills,
     skillTotalCount,
     skillsTruncated,
+    effectCoverage,
     totalHits: integer(source.totalHits, "totalHits"),
     totalDamage: finite(source.totalDamage, "totalDamage"),
     maxRowDamage: finite(source.maxRowDamage, "maxRowDamage"),
@@ -390,6 +416,34 @@ function parseHit(value: unknown): MainDpsHit {
     targetHpAfter: finite(source.targetHpAfter, "hit.targetHpAfter"),
     targetMaxHp: finite(source.targetMaxHp, "hit.targetMaxHp"),
     targetHpPercent: finite(source.targetHpPercent, "hit.targetHpPercent"),
+    activeEffects: boundedList(source.activeEffects, "hit.activeEffects", 42).map(parseHitEffect),
+  };
+}
+
+function parseHitEffect(value: unknown): MainDpsHitEffect {
+  const source = object(value, "hit effect");
+  return {
+    nameHash: text(source.nameHash, "effect.nameHash"),
+    name: nullableText(source.name, "effect.name"),
+    kind: oneOf(source.kind, ["ge", "buff", "debuff"] as const, "effect.kind"),
+    stackCount: nonNegativeInteger(source.stackCount, "effect.stackCount"),
+    durationMs: nonNegativeInteger(source.durationMs, "effect.durationMs"),
+    inhibited: bool(source.inhibited, "effect.inhibited"),
+    infinite: bool(source.infinite, "effect.infinite"),
+  };
+}
+
+function parseEffectCoverage(value: unknown): MainDpsEffectCoverage {
+  const source = object(value, "effect coverage");
+  return {
+    nameHash: text(source.nameHash, "coverage.nameHash"),
+    name: nullableText(source.name, "coverage.name"),
+    kind: oneOf(source.kind, ["ge", "buff", "debuff"] as const, "coverage.kind"),
+    affectedHits: nonNegativeInteger(source.affectedHits, "coverage.affectedHits"),
+    hitCoverage: finite(source.hitCoverage, "coverage.hitCoverage"),
+    affectedDamage: finite(source.affectedDamage, "coverage.affectedDamage"),
+    damageCoverage: finite(source.damageCoverage, "coverage.damageCoverage"),
+    maxStack: nonNegativeInteger(source.maxStack, "coverage.maxStack"),
   };
 }
 

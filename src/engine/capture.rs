@@ -26,10 +26,11 @@ use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::engine::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, CombatState, DpsTimeBasis, EmptyCurtainCharacter,
-    EmptyCurtainItem, EmptyCurtainPlacement, EngineEvent, Hit, HitCharacterSource,
-    HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId, ModScriptEvent,
-    ModScriptEventPhase, PacketDebug, PacketObservation, PartyCombatState, TimeStopEvent,
+    AbyssEvent, AbyssHalf, ActiveEffectKind, CharacterInfo, CombatState, DpsTimeBasis,
+    EmptyCurtainCharacter, EmptyCurtainItem, EmptyCurtainPlacement, EngineEvent, Hit,
+    HitActiveEffect, HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp,
+    HtItemNetId, ModScriptEvent, ModScriptEventPhase, PacketDebug, PacketObservation,
+    PartyCombatState, PartyEffectSnapshot, TimeStopEvent,
 };
 use crate::engine::parser::{
     AbilityCatalog, DamageRecordEncoding, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
@@ -46,7 +47,8 @@ use crate::engine::parser::{
     parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::platform::mods_plugin::{
-    CombatClockTransitionSnapshot, query_combat_clock_transitions, query_mod_events,
+    CombatClockTransitionSnapshot, query_character_effects, query_combat_clock_transitions,
+    query_mod_events,
 };
 use crate::storage::io_util::atomic_write_file;
 
@@ -925,6 +927,38 @@ fn run_plugin_monitor(
                 if sender.send(EngineEvent::ModScript(event)).is_err() {
                     return;
                 }
+            }
+        }
+        if let Ok(effects) = query_character_effects() {
+            let mut grouped = std::collections::BTreeMap::<u32, PartyEffectSnapshot>::new();
+            for effect in effects {
+                let entry =
+                    grouped
+                        .entry(effect.character_id)
+                        .or_insert_with(|| PartyEffectSnapshot {
+                            snapshot_sequence: effect.snapshot_sequence,
+                            character_id: effect.character_id,
+                            effects: Vec::new(),
+                        });
+                entry.effects.push(HitActiveEffect {
+                    name_hash: effect.name_hash,
+                    effect_key: effect.effect_key,
+                    stack_count: effect.stack_count,
+                    duration_ms: effect.duration_ms,
+                    kind: match effect.kind {
+                        1 => ActiveEffectKind::Buff,
+                        2 => ActiveEffectKind::Debuff,
+                        _ => ActiveEffectKind::GameplayEffect,
+                    },
+                    inhibited: effect.flags & 0x1 != 0,
+                    infinite: effect.flags & 0x2 != 0,
+                });
+            }
+            if sender
+                .send(EngineEvent::PartyEffects(grouped.into_values().collect()))
+                .is_err()
+            {
+                return;
             }
         }
         thread::sleep(COMBAT_CLOCK_POLL_INTERVAL);
@@ -5759,6 +5793,7 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         follow_up_damage_name: hit.follow_up_damage_name,
         follow_up_attack_type: hit.follow_up_attack_type,
         follow_up_damage_attribute: hit.follow_up_damage_attribute,
+        active_effects: Vec::new(),
     }))
 }
 
@@ -9932,6 +9967,7 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            active_effects: Vec::new(),
         }
     }
 

@@ -1,0 +1,16 @@
+#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("character-effects");
+NTE_BIND("feature.character-effects");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("character.effects");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(14, "character.query_effects");
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto player_state = nte::game::player_state;
+    nte::ipc::bind(player_state, nullptr);
+}
