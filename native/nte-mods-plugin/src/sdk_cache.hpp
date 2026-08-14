@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <vector>
 
 namespace nte::mods::sdk_cache
 {
@@ -18,8 +19,7 @@ namespace nte::mods::sdk_cache
 	{
 		std::filesystem::path executable_path;
 		std::filesystem::path plugin_directory;
-		std::filesystem::path sdk_directory;
-		std::filesystem::path checksum_file;
+		std::filesystem::path package_file;
 		std::array<uint8_t, SHA256_SIZE> checksum;
 		std::array<char, SHA256_HEX_SIZE + 1> checksum_hex;
 	};
@@ -31,6 +31,8 @@ namespace nte::mods::sdk_cache
 		HANDLE stop_event,
 		wchar_t* error,
 		size_t error_capacity) noexcept;
+
+	using ResolvePluginDirectory = bool(*)(std::filesystem::path& result) noexcept;
 
 	enum class InspectResult : uint8_t
 	{
@@ -60,10 +62,17 @@ namespace nte::mods::sdk_cache
 		wchar_t* error,
 		size_t error_capacity) noexcept;
 
+	bool ReadSdkFile(
+		const CacheContext& context,
+		const std::filesystem::path& relative_path,
+		std::vector<uint8_t>& contents,
+		wchar_t* error,
+		size_t error_capacity) noexcept;
+
 	struct WorkerContext
 	{
-		HMODULE plugin_module;
 		HANDLE stop_event;
+		ResolvePluginDirectory resolve_plugin_directory;
 	};
 
 	DWORD WINAPI RunWorker(void* context);
