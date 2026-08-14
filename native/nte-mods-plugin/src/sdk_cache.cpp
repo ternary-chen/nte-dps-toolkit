@@ -7,12 +7,13 @@
 
 #include <algorithm>
 #include <array>
-#include <cstring>
 #include <exception>
 #include <limits>
 #include <string>
 #include <system_error>
 #include <vector>
+
+#pragma comment(lib, "Cabinet.lib")
 
 namespace nte::mods::sdk_cache
 {
@@ -31,6 +32,11 @@ namespace nte::mods::sdk_cache
 		constexpr wchar_t PACKAGE_FILE_NAME[] = L"NTE_SDK.bin";
 		constexpr wchar_t LEGACY_SDK_DIRECTORY_NAME[] = L"NTE_SDK";
 		constexpr wchar_t LEGACY_CHECKSUM_FILE_NAME[] = L"NTE_SDK.checksum";
+		constexpr wchar_t MOD_WORKSPACE_REGISTRY_KEY[] =
+			L"Software\\NTE DPS Tool\\Mods Plugin";
+		constexpr wchar_t LEGACY_MOD_WORKSPACE_REGISTRY_KEY[] =
+			L"Software\\NTE DPS Tool\\Mod Loader";
+		constexpr wchar_t MOD_WORKSPACE_REGISTRY_VALUE[] = L"Workspace";
 		constexpr std::array<uint8_t, 8> PACKAGE_MAGIC{
 			'N', 'T', 'E', 'S', 'D', 'K', '0', '1',
 		};
@@ -118,6 +124,57 @@ namespace nte::mods::sdk_cache
 			}
 			SetError(L"module path exceeds 32768 characters", error, error_capacity);
 			return false;
+		}
+
+		bool ReadWorkspaceFromRegistryKey(
+			const wchar_t* registry_key,
+			std::filesystem::path& workspace) noexcept
+		{
+			try
+			{
+				DWORD value_type = 0;
+				DWORD byte_length = 0;
+				LSTATUS status = RegGetValueW(
+					HKEY_CURRENT_USER,
+					registry_key,
+					MOD_WORKSPACE_REGISTRY_VALUE,
+					RRF_RT_REG_SZ,
+					&value_type,
+					nullptr,
+					&byte_length);
+				if (status != ERROR_SUCCESS || value_type != REG_SZ ||
+					byte_length < 2 * sizeof(wchar_t) ||
+					byte_length > 32768 * sizeof(wchar_t) ||
+					byte_length % sizeof(wchar_t) != 0)
+					return false;
+				std::vector<wchar_t> buffer(byte_length / sizeof(wchar_t));
+				status = RegGetValueW(
+					HKEY_CURRENT_USER,
+					registry_key,
+					MOD_WORKSPACE_REGISTRY_VALUE,
+					RRF_RT_REG_SZ,
+					&value_type,
+					buffer.data(),
+					&byte_length);
+				if (status != ERROR_SUCCESS || value_type != REG_SZ ||
+					buffer.empty() || buffer.back() != L'\0')
+					return false;
+				workspace = std::filesystem::path(buffer.data());
+				return workspace.is_absolute() && !workspace.empty();
+			}
+			catch (...)
+			{
+				return false;
+			}
+		}
+
+		bool ReadModWorkspace(std::filesystem::path& workspace) noexcept
+		{
+			if (ReadWorkspaceFromRegistryKey(MOD_WORKSPACE_REGISTRY_KEY, workspace))
+				return true;
+			return ReadWorkspaceFromRegistryKey(
+				LEGACY_MOD_WORKSPACE_REGISTRY_KEY,
+				workspace);
 		}
 
 		bool ComputeSha256(
@@ -322,6 +379,20 @@ namespace nte::mods::sdk_cache
 			return true;
 		}
 
+		bool PathToPackageString(
+			const std::filesystem::path& path,
+			std::string& result)
+		{
+			if (path.empty() || path.is_absolute())
+				return false;
+			const std::u8string utf8 = path.lexically_normal().generic_u8string();
+			result.clear();
+			result.reserve(utf8.size());
+			for (const char8_t value : utf8)
+				result.push_back(static_cast<char>(value));
+			return IsSafePackagePath(result);
+		}
+
 		bool RelativeUtf8Path(
 			const std::filesystem::path& root,
 			const std::filesystem::path& path,
@@ -330,14 +401,7 @@ namespace nte::mods::sdk_cache
 			std::error_code error;
 			const std::filesystem::path relative =
 				std::filesystem::relative(path, root, error);
-			if (error || relative.empty() || relative.is_absolute())
-				return false;
-			const std::u8string utf8 = relative.generic_u8string();
-			result.clear();
-			result.reserve(utf8.size());
-			for (const char8_t value : utf8)
-				result.push_back(static_cast<char>(value));
-			return IsSafePackagePath(result);
+			return !error && PathToPackageString(relative, result);
 		}
 
 		bool CollectSourceFiles(
@@ -536,7 +600,14 @@ namespace nte::mods::sdk_cache
 			CloseCompressor(compressor);
 			if (!compressed || compressed_size == 0 || compressed_size > output.size())
 			{
-				SetSystemError(L"Compress(XPRESS-Huffman)", compression_error, error, error_capacity);
+				if (!compressed)
+					SetSystemError(
+						L"Compress(XPRESS-Huffman)",
+						compression_error,
+						error,
+						error_capacity);
+				else
+					SetError(L"XPRESS-Huffman output size is invalid", error, error_capacity);
 				return false;
 			}
 			output.resize(compressed_size);
@@ -569,7 +640,14 @@ namespace nte::mods::sdk_cache
 			CloseDecompressor(decompressor);
 			if (!decompressed || decompressed_size != output_size)
 			{
-				SetSystemError(L"Decompress(XPRESS-Huffman)", decompression_error, error, error_capacity);
+				if (!decompressed)
+					SetSystemError(
+						L"Decompress(XPRESS-Huffman)",
+						decompression_error,
+						error,
+						error_capacity);
+				else
+					SetError(L"XPRESS-Huffman decompressed size is invalid", error, error_capacity);
 				return false;
 			}
 			return true;
@@ -618,12 +696,14 @@ namespace nte::mods::sdk_cache
 
 				std::vector<uint8_t> raw(PACKAGE_CHUNK_BYTES);
 				std::vector<uint8_t> compressed;
+				bool all_files_succeeded = true;
 				for (const SourceFile& source : files)
 				{
 					if (stop_event != nullptr &&
 						WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT)
 					{
 						SetError(L"SDK package compression was cancelled", error, error_capacity);
+						all_files_succeeded = false;
 						break;
 					}
 					const uint32_t path_length = static_cast<uint32_t>(source.relative_path.size());
@@ -632,6 +712,7 @@ namespace nte::mods::sdk_cache
 					if (chunk_count_64 > std::numeric_limits<uint32_t>::max())
 					{
 						SetError(L"SDK package file has too many chunks", error, error_capacity);
+						all_files_succeeded = false;
 						break;
 					}
 					const uint32_t chunk_count = static_cast<uint32_t>(chunk_count_64);
@@ -639,7 +720,10 @@ namespace nte::mods::sdk_cache
 						!WriteScalar(output, chunk_count, error, error_capacity) ||
 						!WriteScalar(output, source.size, error, error_capacity) ||
 						!WriteExact(output, source.relative_path.data(), source.relative_path.size(), error, error_capacity))
+					{
+						all_files_succeeded = false;
 						break;
+					}
 
 					HANDLE input = CreateFileW(
 						source.path.c_str(),
@@ -652,6 +736,7 @@ namespace nte::mods::sdk_cache
 					if (input == INVALID_HANDLE_VALUE)
 					{
 						SetSystemError(L"CreateFileW(generated SDK file)", GetLastError(), error, error_capacity);
+						all_files_succeeded = false;
 						break;
 					}
 
@@ -688,10 +773,14 @@ namespace nte::mods::sdk_cache
 					}
 					CloseHandle(input);
 					if (!file_succeeded || remaining != 0)
+					{
+						if (file_succeeded)
+							SetError(L"generated SDK file changed while packaging", error, error_capacity);
+						all_files_succeeded = false;
 						break;
+					}
 				}
-
-				if (error != nullptr && error_capacity != 0 && error[0] != L'\0')
+				if (!all_files_succeeded)
 					break;
 				if (!FlushFileBuffers(output))
 				{
@@ -764,6 +853,7 @@ namespace nte::mods::sdk_cache
 
 				std::array<bool, REQUIRED_SDK_FILES.size()> required_seen{};
 				bool requested_seen = false;
+				bool parse_valid = true;
 				uint64_t parsed_total = 0;
 				std::vector<uint8_t> compressed;
 				std::vector<uint8_t> raw;
@@ -778,48 +868,65 @@ namespace nte::mods::sdk_cache
 						path_length == 0 || path_length > MAX_PACKAGE_PATH_BYTES ||
 						file_size > MAX_GENERATED_SDK_BYTES ||
 						file_size > MAX_GENERATED_SDK_BYTES - parsed_total)
+					{
+						parse_valid = false;
 						break;
+					}
 					const uint64_t expected_chunks =
 						(file_size + PACKAGE_CHUNK_BYTES - 1) / PACKAGE_CHUNK_BYTES;
 					if (expected_chunks != chunk_count)
+					{
+						parse_valid = false;
 						break;
+					}
 					std::string path(path_length, '\0');
 					if (!ReadExact(package, path.data(), path.size(), error, error_capacity) ||
 						!IsSafePackagePath(path))
+					{
+						parse_valid = false;
 						break;
+					}
 
 					int required_index = -1;
 					for (size_t index = 0; index < REQUIRED_SDK_FILES.size(); ++index)
 					{
 						if (path == REQUIRED_SDK_FILES[index])
 						{
-							required_index = static_cast<int>(index);
 							if (required_seen[index])
 							{
 								required_index = -2;
 								break;
 							}
 							required_seen[index] = true;
+							required_index = static_cast<int>(index);
 							break;
 						}
 					}
 					if (required_index == -2)
+					{
+						parse_valid = false;
 						break;
+					}
 					const bool requested = requested_path != nullptr && path == *requested_path;
 					if (requested && requested_seen)
+					{
+						parse_valid = false;
 						break;
+					}
 					if (requested)
 					{
 						requested_seen = true;
 						if (requested_contents == nullptr || file_size > MAX_READ_SDK_FILE_BYTES)
+						{
+							parse_valid = false;
 							break;
+						}
 						requested_contents->clear();
 						requested_contents->reserve(static_cast<size_t>(file_size));
 					}
 					const bool decompress_file =
 						requested || (validate_required && required_index >= 0);
 					uint64_t file_parsed = 0;
-					bool file_valid = true;
 					for (uint32_t chunk_index = 0; chunk_index < chunk_count; ++chunk_index)
 					{
 						uint32_t raw_size = 0;
@@ -830,7 +937,7 @@ namespace nte::mods::sdk_cache
 							compressed_size == 0 || compressed_size > MAX_COMPRESSED_CHUNK_BYTES ||
 							raw_size > file_size - file_parsed)
 						{
-							file_valid = false;
+							parse_valid = false;
 							break;
 						}
 						if (decompress_file)
@@ -846,7 +953,7 @@ namespace nte::mods::sdk_cache
 									error,
 									error_capacity))
 							{
-								file_valid = false;
+								parse_valid = false;
 								break;
 							}
 							if (requested)
@@ -855,30 +962,32 @@ namespace nte::mods::sdk_cache
 						}
 						else if (!SeekForward(package, compressed_size, error, error_capacity))
 						{
-							file_valid = false;
+							parse_valid = false;
 							break;
 						}
 						file_parsed += raw_size;
 					}
-					if (!file_valid || file_parsed != file_size ||
+					if (!parse_valid || file_parsed != file_size ||
 						(validate_required && required_index >= 0 && file_size == 0) ||
 						(requested && requested_contents->size() != file_size))
-						break;
-					parsed_total += file_size;
-					if (file_index + 1 == file_count)
 					{
-						LARGE_INTEGER zero{};
-						LARGE_INTEGER position{};
-						if (!SetFilePointerEx(package, zero, &position, FILE_CURRENT) ||
-							position.QuadPart != package_size.QuadPart ||
-							parsed_total != declared_total ||
-							(validate_required &&
-								!std::all_of(required_seen.begin(), required_seen.end(), [](bool value) { return value; })) ||
-							(requested_path != nullptr && !requested_seen))
-							break;
-						succeeded = true;
+						parse_valid = false;
+						break;
 					}
+					parsed_total += file_size;
 				}
+				if (!parse_valid)
+					break;
+				LARGE_INTEGER zero{};
+				LARGE_INTEGER position{};
+				if (!SetFilePointerEx(package, zero, &position, FILE_CURRENT) ||
+					position.QuadPart != package_size.QuadPart ||
+					parsed_total != declared_total ||
+					(validate_required &&
+						!std::all_of(required_seen.begin(), required_seen.end(), [](bool value) { return value; })) ||
+					(requested_path != nullptr && !requested_seen))
+					break;
+				succeeded = true;
 			} while (false);
 
 			CloseHandle(package);
@@ -1034,24 +1143,27 @@ namespace nte::mods::sdk_cache
 	DWORD RunWorkerImpl(void* opaque)
 	{
 		const auto* worker = static_cast<const WorkerContext*>(opaque);
-		if (worker == nullptr || worker->stop_event == nullptr ||
-			worker->resolve_plugin_directory == nullptr)
+		if (worker == nullptr || worker->plugin_module == nullptr ||
+			worker->stop_event == nullptr)
 			return ERROR_INVALID_PARAMETER;
 
 		std::filesystem::path executable;
+		std::filesystem::path plugin_file;
 		wchar_t error[512]{};
-		if (!ModulePath(nullptr, executable, error, _countof(error)))
+		if (!ModulePath(nullptr, executable, error, _countof(error)) ||
+			!ModulePath(worker->plugin_module, plugin_file, error, _countof(error)))
 		{
 			OutputDebugStringW(L"NTE Mods plugin SDK cache: ");
 			OutputDebugStringW(error);
 			OutputDebugStringW(L"\n");
 			return ERROR_INVALID_DATA;
 		}
+		const std::filesystem::path legacy_game_cache_directory = plugin_file.parent_path();
 
 		std::filesystem::path plugin;
 		while (WaitForSingleObject(worker->stop_event, 0) == WAIT_TIMEOUT)
 		{
-			if (worker->resolve_plugin_directory(plugin) && !plugin.empty())
+			if (ReadModWorkspace(plugin))
 				break;
 			if (WaitForSingleObject(worker->stop_event, OFFSET_RETRY_MS) != WAIT_TIMEOUT)
 				return ERROR_CANCELLED;
@@ -1064,6 +1176,7 @@ namespace nte::mods::sdk_cache
 			executable, plugin, context, error, _countof(error));
 		if (inspection == InspectResult::Reusable)
 		{
+			RemoveLegacyCache(legacy_game_cache_directory);
 			OutputDebugStringW(L"NTE Mods plugin: reusing checksum-matched compressed SDK package.\n");
 			return ERROR_SUCCESS;
 		}
@@ -1100,6 +1213,7 @@ namespace nte::mods::sdk_cache
 			OutputDebugStringW(L"\n");
 			return ERROR_WRITE_FAULT;
 		}
+		RemoveLegacyCache(legacy_game_cache_directory);
 		OutputDebugStringW(L"NTE Mods plugin: generated and cached the compressed SDK package.\n");
 		return ERROR_SUCCESS;
 	}
@@ -1180,18 +1294,10 @@ namespace nte::mods::sdk_cache
 			if (error != nullptr && error_capacity != 0)
 				error[0] = L'\0';
 			std::string requested;
-			if (!RelativeUtf8Path(std::filesystem::path(L"."), relative_path, requested))
+			if (!PathToPackageString(relative_path, requested))
 			{
-				const std::u8string utf8 = relative_path.generic_u8string();
-				requested.clear();
-				requested.reserve(utf8.size());
-				for (const char8_t value : utf8)
-					requested.push_back(static_cast<char>(value));
-				if (!IsSafePackagePath(requested))
-				{
-					SetError(L"requested SDK package path is invalid", error, error_capacity);
-					return false;
-				}
+				SetError(L"requested SDK package path is invalid", error, error_capacity);
+				return false;
 			}
 			return ReadPackage(context, &requested, &contents, false, error, error_capacity);
 		}
