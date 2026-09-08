@@ -15,8 +15,15 @@ if ($protocol -notmatch 'ATTACH_SENTINEL[\s\S]+IMAGE_SIGNATURE[\s\S]+SelectReser
 if ($manualMapLoader -notmatch 'SelectReservedParameter\([\s\S]+dllBytes\.data\(\)[\s\S]+remoteParams[\s\S]+ManualMapDll\([\s\S]+reservedParameter') {
     throw "The manual mapper does not select the shared marker for the signed plugin image."
 }
-if ($pluginEntry -notmatch 'DLL_PROCESS_ATTACH\s*&&[\s\S]+IsExplicitAttach\(reserved\)[\s\S]+StartPluginRuntime\(module\)') {
-    throw "The plugin does not require the explicit marker before manual-map startup."
+$dllMain = [regex]::Match(
+    $pluginEntry,
+    'BOOL\s+WINAPI\s+DllMain\([\s\S]+?\n\}',
+    [System.Text.RegularExpressions.RegexOptions]::Singleline).Value
+if ($dllMain -notmatch 'if\s*\(reason\s*==\s*DLL_PROCESS_ATTACH\)[\s\S]+RecordPluginModule\(module\);') {
+    throw "The plugin does not record its module during process attach."
+}
+if ($dllMain -notmatch 'if\s*\(nte::mods::manual_map::IsExplicitAttach\(reserved\)\)\s*nte::mods::InitializeRecordedPluginRuntime\(\);\s*else\s*nte::mods::ScheduleRecordedPluginRuntimeInitialization\(\);') {
+    throw "The plugin does not gate direct manual-map startup on the explicit marker and schedule proxy startup."
 }
 
 Write-Output "manual_map_protocol_source_tests: PASS"
