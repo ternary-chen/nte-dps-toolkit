@@ -39,3 +39,23 @@ __pycache__/
 
 # Local Codex verification artifacts
 /.codex-transaction/
+
+# Local IDE, package caches, generated packages and sensitive runtime inputs
+.idea/
+.vscode/
+.pnpm-store/
+/dist/
+/output/
+/accounts/
+*.pdb
+*.dmp
+*.pcap
+*.pcapng
+*.usmap
+*.key
+*.pfx
+*.p12
+
+# Private component sources and source-bearing archives stay outside the public fork
+/analysis-core/
+/nte-analysis-core-windows-x64.zip
