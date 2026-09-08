@@ -16,7 +16,7 @@
   <PropertyGroup><OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir><IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\</IntDir><TargetName>nte-mod-loader</TargetName></PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile><RuntimeLibrary Condition="'$(Configuration)'=='Debug'">MultiThreadedDebug</RuntimeLibrary><RuntimeLibrary Condition="'$(Configuration)'=='Release'">MultiThreaded</RuntimeLibrary><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp17</LanguageStandard><AdditionalIncludeDirectories>$(SolutionDir)core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions><PreprocessorDefinitions>UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
-    <Link><SubSystem>Console</SubSystem><GenerateDebugInformation>true</GenerateDebugInformation><UACExecutionLevel>RequireAdministrator</UACExecutionLevel><AdditionalDependencies>Advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+    <Link><SubSystem>Console</SubSystem><GenerateDebugInformation Condition="'$(Configuration)'=='Debug'">true</GenerateDebugInformation><GenerateDebugInformation Condition="'$(Configuration)'=='Release'">false</GenerateDebugInformation><UACExecutionLevel>RequireAdministrator</UACExecutionLevel><AdditionalDependencies>Advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
   <ItemGroup><ClCompile Include="main.cpp" /></ItemGroup>
   <ItemGroup><ResourceCompile Include="AppResources.rc" /></ItemGroup>

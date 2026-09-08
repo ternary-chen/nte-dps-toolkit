@@ -22,6 +22,8 @@
 
 产物输出到 `bin\Release\`（`nte-mod-loader.exe`、`nte_shim.dll`、`nte-mod-loader-tests.exe`）。
 
+Release 的 Loader 与内嵌 shim 不生成链接调试信息，避免嵌入本机 PDB 路径；Debug 保留调试信息。对外交付包不得携带调试符号。
+
 ## 使用
 
 发布包中 Loader 由 NTE 控制台直接管理，不需要放进游戏目录。目录结构固定为：
