@@ -57,6 +57,7 @@ pub fn read_mods_plugin() -> std::io::Result<Option<Vec<u8>>> {
     let relative_path = Path::new(MODS_PLUGIN_PATH);
     let candidates = [
         super::paths::software_dir().join(relative_path),
+        #[cfg(debug_assertions)]
         Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path),
     ];
     read_first_compatible_mods_plugin(&candidates)
@@ -376,6 +377,7 @@ fn disk_resource_candidates(path: &Path) -> Vec<PathBuf> {
             }
         }
 
+        #[cfg(debug_assertions)]
         push_unique_path(
             &mut candidates,
             Path::new(env!("CARGO_MANIFEST_DIR")).join(path),
