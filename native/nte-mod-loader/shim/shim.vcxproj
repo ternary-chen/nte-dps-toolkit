@@ -15,13 +15,14 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup><OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir><IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\</IntDir><TargetName>nte_shim</TargetName></PropertyGroup>
   <ItemDefinitionGroup>
-    <ClCompile><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp17</LanguageStandard><AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\third_party\minhook\include;$(ProjectDir)..\third_party\manualmap;$(SolutionDir)..\nte-mods-plugin\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions><PreprocessorDefinitions>UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <ClCompile><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp17</LanguageStandard><AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\core\include;$(ProjectDir)..\third_party\minhook\include;$(ProjectDir)..\third_party\manualmap;$(SolutionDir)..\nte-mods-plugin\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions><PreprocessorDefinitions>UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
     <Link><GenerateDebugInformation Condition="'$(Configuration)'=='Debug'">true</GenerateDebugInformation><GenerateDebugInformation Condition="'$(Configuration)'=='Release'">false</GenerateDebugInformation></Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="include\shim\CreateProcessHook.h" />
     <ClInclude Include="include\shim\DllMain.h" />
     <ClInclude Include="include\shim\ManualMapLoader.h" />
+    <ClInclude Include="include\shim\RegisteredDllLoader.h" />
     <ClInclude Include="include\shim\ProcessTarget.h" />
     <ClInclude Include="include\shim\ShimGlobals.h" />
     <ClInclude Include="..\third_party\minhook\include\MinHook.h" />
@@ -31,6 +32,7 @@
     <ClCompile Include="src\CreateProcessHook.cpp" />
     <ClCompile Include="src\DllMain.cpp" />
     <ClCompile Include="src\ManualMapLoader.cpp" />
+    <ClCompile Include="src\RegisteredDllLoader.cpp" />
     <!-- Simple-Manual-Map-Injector (MIT): manual map 注入器本体, 静默其 printf 输出与警告 -->
     <ClCompile Include="..\third_party\manualmap\injector.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel><PreprocessorDefinitions>DISABLE_OUTPUT;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
     <!-- third-party MinHook (BSD-2-Clause): silence its own C warnings -->

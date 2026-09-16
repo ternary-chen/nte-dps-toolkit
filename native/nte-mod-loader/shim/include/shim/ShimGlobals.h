@@ -2,6 +2,7 @@
 #pragma once
 
 #include <Windows.h>
+#include "nte/loader/Injection/ShimProtocol.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -42,7 +43,9 @@ struct ShimInitParams {
 	wchar_t payloadDllPath[kPathCapacity]; // --dll 指定的注入 DLL
 	wchar_t shimSelfPath[kPathCapacity];   // shim 自身临时文件路径（读 self 字节用）
 	std::uint64_t sessionNonce;
+	std::uint32_t payloadLoadLibrary; // 0=manualmap, 1=LoadLibraryExW; duplicated wire layout
 };
+static_assert(sizeof(ShimInitParams) == nte::loader::kShimInitParamsSize);
 
 // ── 全局状态 ─────────────────────────────────────────────────────────────────
 

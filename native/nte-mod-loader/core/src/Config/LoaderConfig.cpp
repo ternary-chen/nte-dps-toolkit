@@ -76,6 +76,16 @@ LoaderConfig LoaderConfig::Parse(const std::vector<std::wstring>& arguments,
         const auto& argument = arguments[i];
         if (argument == L"--dry-run") {
             config.dryRun = true;
+        } else if (argument == L"--payload-load-mode") {
+            if (i + 1 >= arguments.size()) {
+                config.controlArgumentsValid = false;
+            } else {
+                const auto& mode = arguments[++i];
+                if (mode != L"manualmap" && mode != L"loadlibrary")
+                    config.controlArgumentsValid = false;
+                else
+                    config.payloadLoadLibrary = mode == L"loadlibrary";
+            }
         } else if (argument == L"--once") {
             config.oneShot = true;
 		} else if (argument == L"--monitor-timeout") {
@@ -126,6 +136,11 @@ LoaderConfig LoaderConfig::Parse(const std::vector<std::wstring>& arguments,
 		config.monitorTimeoutSeconds =
 			ReadUnsignedEnvironment(L"NTE_MOD_LOADER_MONITOR_TIMEOUT", 120);
 	}
+    if (config.payloadLoadLibrary) {
+        std::error_code error;
+        config.payloadDll = std::filesystem::absolute(config.payloadDll, error).lexically_normal();
+        if (error || !config.payloadDll.is_absolute()) config.controlArgumentsValid = false;
+    }
     return config;
 }
 

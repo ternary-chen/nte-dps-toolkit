@@ -152,6 +152,7 @@ BOOL WINAPI UserDllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) 
 			wcsncpy_s(g_initParams.payloadDllPath, params->payloadDllPath, _TRUNCATE);
 			wcsncpy_s(g_initParams.shimSelfPath, params->shimSelfPath, _TRUNCATE);
 			g_initParams.sessionNonce = params->sessionNonce;
+			g_initParams.payloadLoadLibrary = params->payloadLoadLibrary;
         }
 		HANDLE hThread = CreateThread(nullptr, 0, &StartAddress, nullptr, 0, nullptr);
 		if (hThread != nullptr) CloseHandle(hThread);
@@ -168,6 +169,10 @@ BOOL WINAPI UserDllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) 
 }
 
 } // namespace nte::shim
+
+// Exported data survives optimization and is inspected inside EXE resource 101.
+extern "C" __declspec(dllexport) const char NteLoaderShimProtocol[] =
+    NTE_LOADER_SHIM_PROTOCOL_SIGNATURE;
 
 // 标准 CRT DllMain 入口
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {

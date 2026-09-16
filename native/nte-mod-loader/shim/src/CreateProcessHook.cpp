@@ -12,6 +12,7 @@
 
 #include "shim/DllMain.h"
 #include "shim/ManualMapLoader.h"
+#include "shim/RegisteredDllLoader.h"
 #include "shim/ProcessTarget.h"
 #include "shim/ShimGlobals.h"
 
@@ -112,9 +113,15 @@ BOOL WINAPI DetourCreateProcessW(
 				wcsncpy_s(params.payloadDllPath, g_internalDllPath, _TRUNCATE);
 				wcsncpy_s(params.shimSelfPath, g_initParams.shimSelfPath, _TRUNCATE);
 				params.sessionNonce = g_initParams.sessionNonce;
+				params.payloadLoadLibrary = g_initParams.payloadLoadLibrary;
                 InjectByManualMap(lpProcessInformation->hProcess, g_selfBytes, &params);
             }
-        } else {
+        } else if (g_initParams.payloadLoadLibrary == 1) {
+            // The caller must receive its handles before it can resume an
+            // originally suspended child. A bounded worker waits for loader init.
+            QueueRegisteredDllLoad(lpProcessInformation->hProcess,
+                g_internalDllPath, g_initParams.sessionNonce);
+        } else if (g_initParams.payloadLoadLibrary == 0) {
             // HTGame.exe: manual map 注入 payload（--dll 指定的 DLL）。
             // 文件由用户持有, 持久存在, 每次注入时读取 raw 字节。
             if (g_internalDllPath[0] != L'\0') {

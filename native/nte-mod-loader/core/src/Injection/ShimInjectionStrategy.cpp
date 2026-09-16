@@ -306,6 +306,7 @@ int ShimInjectionStrategy::Execute(const StrategyContext& context) {
 	wcsncpy_s(initParams.shimSelfPath,
 		shimFile.path().wstring().c_str(), _TRUNCATE);
 	initParams.sessionNonce = sessionNonce;
+	initParams.payloadLoadLibrary = context.config.payloadLoadLibrary ? 1u : 0u;
 	InjectedLauncherCleanup injectedLauncherCleanup(
 		context.logger, injected,
 		launcherPath ? std::optional(launcherPath->parent_path()) : std::nullopt);

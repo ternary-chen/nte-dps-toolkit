@@ -9,6 +9,7 @@ namespace nte::loader {
 
 struct LoaderConfig {
     bool spawnLauncher{false};
+    bool payloadLoadLibrary{false}; // explicit registered payload load; shim remains manual mapped
     bool dryRun{true};
     bool oneShot{false};
 	bool controlArgumentsValid{true};
